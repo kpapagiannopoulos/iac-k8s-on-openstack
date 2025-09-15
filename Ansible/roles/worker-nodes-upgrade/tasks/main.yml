@@ -1,0 +1,54 @@
+---
+# Tasks to upgrade control plane nodes
+
+- name: Ensure kubeconfig exists
+  stat:
+    path: /home/k8s/.kube/config
+  register: kubeconfig_file
+
+- name: Fail if kubeconfig is not present
+  fail:
+    msg: "Kubeconfig file is missing!"
+  when: not kubeconfig_file.stat.exists
+
+- name: Add Kubernetes apt repository
+  apt_repository:
+    repo: "deb https://pkgs.k8s.io/core/apt/ kubernetes-xenial main"
+    state: present
+
+- name: Add Kubernetes repository key
+  apt_key:
+    url: https://pkgs.k8s.io/core/apt/doc/apt-key.gpg
+    state: present
+
+- name: Update apt cache on control plane nodes
+  apt:
+    update_cache: yes
+
+
+- name: Upgrade kubeadm on worker nodes
+  shell: |
+    sudo apt-mark unhold kubeadm && \
+    sudo apt-get install -y kubeadm={{ kubernetes_upgrade_version }} && \
+    sudo apt-mark hold kubeadm
+  args:
+    warn: false
+
+- name: Drain worker node
+  command: kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-local-data --kubeconfig=/home/k8s/.kube/config
+
+- name: Upgrade kubelet and kubectl on worker nodes
+  shell: |
+    sudo apt-mark unhold kubelet kubectl && \
+    sudo apt-get install -y kubelet={{ kubernetes_upgrade_version }}-00 kubectl={{ kubernetes_upgrade_version }}-00 && \
+    sudo apt-mark hold kubelet kubectl
+  args:
+    warn: false
+
+- name: Restart kubelet on worker nodes
+  systemd:
+    name: kubelet
+    state: restarted
+
+- name: Uncordon worker node
+  command: kubectl uncordon {{ inventory_hostname }} --kubeconfig=/home/k8s/.kube/config 

@@ -1,0 +1,9 @@
+.terraform/
+.ssh
+**/.terraform/*
+# .tfstate files
+*.tfstate
+*.tfstate.*
+terraform.tfstate.backup
+terraform.tfstate
+*.pem

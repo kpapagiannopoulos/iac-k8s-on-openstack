@@ -1,0 +1,4 @@
+# roles/bootstrap/tasks/main.yml
+
+---
+- import_tasks: update-reboot-nodes.yml

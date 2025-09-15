@@ -1,0 +1,34 @@
+#cloud-config
+hostname: ${hostname}
+users:
+  - name: k8s
+    gecos: Kubernetes User
+    groups: sudo
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    shell: /bin/bash
+    ssh-authorized-keys:
+      - ${ssh_key}
+network:
+  version: 2
+  ethernets:
+    ens3:
+      dhcp4: true
+      dhcp6: true
+      nameservers:
+        addresses:
+          - 8.8.8.8
+          - 8.8.4.4
+runcmd:
+  - mkdir -p /home/k8s/.ssh
+  - cp /home/ubuntu/.ssh/authorized_keys /home/k8s/.ssh/authorized_keys
+  - chown -R k8s:k8s /home/k8s/.ssh
+  - chmod 700 /home/k8s/.ssh
+  - chmod 600 /home/k8s/.ssh/authorized_keys
+  - systemctl disable systemd-resolved
+  - systemctl mask systemd-resolved
+  - rm /etc/resolv.conf
+  - echo "nameserver 8.8.8.8" > /etc/resolv.conf
+  - echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+  - apt-get update
+  - apt-get upgrade -y
+  - reboot

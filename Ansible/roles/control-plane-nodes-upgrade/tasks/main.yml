@@ -1,0 +1,75 @@
+---
+# Playbook to upgrade control plane nodes
+
+- name: Ensure kubeconfig exists
+  stat:
+    path: /home/k8s/.kube/config
+  register: kubeconfig_file
+
+- name: Fail if kubeconfig is not present
+  fail:
+    msg: "Kubeconfig file is missing!"
+  when: not kubeconfig_file.stat.exists
+
+- name: Ensure keyrings directory exists on control plane nodes
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Remove corrupted Kubernetes apt keyring if exists
+  file:
+    path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    state: absent
+  when: not kubernetes_key_result is defined
+
+- name: Add Kubernetes apt key on control plane nodes
+  shell: |
+    curl -fsSL -L https://pkgs.k8s.io/core:/stable:/{{ kubernetes_upgrade_version }}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  register: kubernetes_key_result
+
+- name: Fail if Kubernetes apt key addition failed
+  fail:
+    msg: "Failed to add Kubernetes apt key."
+  when: kubernetes_key_result.rc != 0
+
+- name: Add Kubernetes apt repository on control plane nodes
+  copy:
+    content: 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ kubernetes_upgrade_version }}/deb/ /'
+    dest: /etc/apt/sources.list.d/kubernetes.list
+
+- name: Update apt cache on control plane nodes
+  apt:
+    update_cache: yes
+
+- name: Upgrade kubeadm on control plane nodes
+  apt:
+    name: "kubeadm={{ kubernetes_version }}"
+    state: latest
+
+- name: Drain the control plane node
+  command: kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-local-data --kubeconfig=/home/k8s/.kube/config
+
+- name: Upgrade Kubernetes control plane
+  command: kubeadm upgrade apply v{{ kubernetes_version }} -y --kubeconfig=/home/k8s/.kube/config
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+  run_once: true
+
+- name: Uncordon the control plane node
+  command: kubectl uncordon {{ inventory_hostname }} --kubeconfig=/home/k8s/.kube/config
+
+- name: Upgrade kubelet and kubectl on control plane nodes
+  apt:
+    name:
+      - "kubelet={{ kubernetes_upgrade_version }}"
+      - "kubectl={{ kubernetes_upgrade_version }}"
+    state: present
+
+- name: Restart kubelet on control plane nodes
+  systemd:
+    name: kubelet
+    state: restarted

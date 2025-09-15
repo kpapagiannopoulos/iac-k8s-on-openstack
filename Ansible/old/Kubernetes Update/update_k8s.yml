@@ -1,0 +1,118 @@
+---
+- hosts: all
+  become: yes
+  tasks:
+    - name: Get the Kubernetes node name using internal IP
+      shell: |
+        /usr/bin/kubectl get nodes -o jsonpath="{.items[?(@.status.addresses[?(@.type=='InternalIP')].address=='{{ ansible_default_ipv4.address }}')].metadata.name}"
+      environment:
+        KUBECONFIG: /home/k8s/.kube/config
+      register: kube_node_name
+      changed_when: false
+
+    - name: Cordon the node
+      command: >-
+        /usr/bin/kubectl cordon
+        {{ kube_node_name.stdout }}
+      environment:
+        KUBECONFIG: /home/k8s/.kube/config
+      delegate_to: "{{ groups['master_nodes'][0] }}"
+      changed_when: false
+
+    - name: Wait for node to cordon
+      command: >-
+        /usr/bin/kubectl get node
+        {{ kube_node_name.stdout }}
+        -o json
+      environment:
+        KUBECONFIG: /home/k8s/.kube/config
+      register: wait_for_cordon
+      retries: 10
+      delay: 10
+      delegate_to: "{{ groups['master_nodes'][0] }}"
+      until: (wait_for_cordon.stdout | from_json).spec.unschedulable
+      changed_when: false
+
+    - name: Drain the node
+      command: >-
+        /usr/bin/kubectl drain
+        --force
+        --ignore-daemonsets
+        --grace-period {{ drain_grace_period }}
+        --timeout {{ drain_timeout }}
+        --delete-local-data {{ kube_node_name.stdout }}
+      environment:
+        KUBECONFIG: /home/k8s/.kube/config
+      delegate_to: "{{ groups['master_nodes'][0] }}"
+      changed_when: false
+
+- hosts: master_nodes
+  become: yes
+  tasks:
+    - name: Update kubeadm, kubelet, kubectl on the master node to a specific version
+      apt:
+        name:
+          - kubeadm={{ kube_version }}
+          - kubelet={{ kube_version }}
+          - kubectl={{ kube_version }}
+        state: present
+        force_apt_get: yes
+        force: yes
+
+    - name: Upgrade cluster on master node
+      shell: "kubeadm upgrade apply v{{ kube_version }} -y"
+      register: upgrade_output
+
+    - name: Restart kubelet service on master node
+      systemd:
+        name: kubelet
+        state: restarted
+        daemon_reload: yes
+
+- hosts: worker_nodes
+  become: yes
+  tasks:
+    - name: Update kubeadm, kubelet, kubectl on the worker nodes to a specific version
+      apt:
+        name:
+          - kubeadm={{ kube_version }}
+          - kubelet={{ kube_version }}
+          - kubectl={{ kube_version }}
+        state: present
+        force_apt_get: yes
+        force: yes
+
+    - name: Upgrade worker node using kubeadm
+      shell: "kubeadm upgrade node"
+
+    - name: Restart kubelet service on worker node
+      systemd:
+        name: kubelet
+        state: restarted
+        daemon_reload: yes
+
+- hosts: all
+  become: yes
+  tasks:
+    - name: Uncordon the node
+      command: >-
+        /usr/bin/kubectl uncordon
+        {{ kube_node_name.stdout }}
+      environment:
+        KUBECONFIG: /home/k8s/.kube/config
+      delegate_to: "{{ groups['master_nodes'][0] }}"
+      changed_when: false
+
+    - name: Wait for node to uncordon
+      command: >-
+        /usr/bin/kubectl get node
+        {{ kube_node_name.stdout }}
+        -o json
+      environment:
+        KUBECONFIG: /home/k8s/.kube/config
+      register: wait_for_uncordon
+      retries: 10
+      delay: 10
+      delegate_to: "{{ groups['master_nodes'][0] }}"
+      until: not (wait_for_uncordon.stdout | from_json).spec.unschedulable is defined
+      changed_when: false

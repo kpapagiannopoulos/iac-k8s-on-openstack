@@ -1,0 +1,5 @@
+- name: Kubernetes Cluster Setup - Control Plane
+  hosts: all
+  become: true
+  roles:
+    - role: ./roles/bootstrap

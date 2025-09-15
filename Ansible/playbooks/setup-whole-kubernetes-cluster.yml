@@ -1,0 +1,24 @@
+---
+- name: Kubernetes Cluster Setup - Control Plane
+  hosts: control_plane_nodes
+  become: true
+  vars_files:
+    - ../inventories/uat-env/vars/vars.yml  # Control plane variables
+  roles:
+    - role: ./roles/control-plane-nodes-setup
+
+- name: Kubernetes Cluster Setup - Worker Nodes
+  hosts: worker_nodes
+  become: true
+  vars_files:
+    - ../inventories/uat-env/vars/vars.yml  # Worker node variables
+  roles:
+    - role: ./roles/worker-nodes-setup
+
+- name: Apply Calico
+  hosts: control_plane_nodes
+  become: yes
+  vars_files:
+    - ../inventories/uat-env/vars/vars.yml
+  roles:
+    - ./roles/k8s-cni-setup  # Role for applying the Calico CNI plugin

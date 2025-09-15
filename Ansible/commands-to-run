@@ -1,0 +1,14 @@
+ansible-playbook -i ./inventories/uat-env/hosts.ini ./playbooks/update-reboot-nodes.yml
+
+
+
+
+
+
+ansible-playbook -i ./inventories/uat-env/hosts.ini ./playbooks/setup-whole-kubernetes-cluster.yml
+
+
+ansible-playbook -i ./inventories/uat-env/hosts.ini ./playbooks/upgrade-k8s-cluster.yml
+
+
+ssh -i C:\Users\kpapa\IaC\Terraform\uat-env\.ssh\k8s-shared-key.pem k8s@147.102.75.172

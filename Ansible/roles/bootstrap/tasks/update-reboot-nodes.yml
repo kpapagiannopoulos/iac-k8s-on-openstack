@@ -1,0 +1,17 @@
+---
+# tasks/main.yml
+
+- name: Update apt package list
+  apt:
+    update_cache: yes
+
+- name: Upgrade all installed packages
+  apt:
+    upgrade: dist
+    autoremove: yes
+    autoclean: yes
+
+- name: Reboot the system
+  reboot:
+    msg: "Rebooting after upgrade"
+    reboot_timeout: 300

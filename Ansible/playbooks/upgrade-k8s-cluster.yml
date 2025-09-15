@@ -1,0 +1,13 @@
+- hosts: control_plane_nodes
+  become: true
+  vars_files:
+    - ../inventories/uat-env/vars/vars.yml
+  roles:
+    - ./roles/control-plane-nodes-upgrade
+
+- hosts: worker_nodes
+  become: true
+  vars_files:
+    - ../inventories/uat-env/vars/vars.yml
+  roles:
+    - ./roles/worker-nodes-upgrade

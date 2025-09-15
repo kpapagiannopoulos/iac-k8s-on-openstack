@@ -1,0 +1,19 @@
+#update and upgrade the nodes
+ansible-playbook -i hosts upgrade_reboot_nodes.yml 
+
+
+#setup k8s master nodes
+ansible-playbook -i hosts kubernetes_master_setup.yml --limit master_nodes
+
+#setup k8s worker nodes 
+
+ansible-playbook -i hosts kubernetes_worker_setup.yml --limit worker_nodes
+
+ansible-playbook -i hosts upgrade_reboot_nodes.yml
+
+
+ansible-lint setup_whole_cluster.yml 
+
+
+#for master and worker nodes
+sudo kubeadm reset

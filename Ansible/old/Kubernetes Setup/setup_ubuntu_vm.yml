@@ -1,0 +1,122 @@
+---
+- name: Initial setup for Ubuntu VM
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Fix DNS resolution by writing to resolv.conf
+      lineinfile:
+        path: /etc/resolv.conf
+        line: "{{ item }}"
+        create: yes
+        state: present
+      with_items:
+        - "nameserver 8.8.8.8"
+        - "nameserver 8.8.4.4"
+
+    - name: Print current DNS configuration
+      command: cat /etc/resolv.conf
+      register: resolv_conf
+    - debug:
+        msg: "{{ resolv_conf.stdout_lines }}"
+
+- name: Update and upgrade system packages
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update the APT package index
+      apt:
+        update_cache: yes
+
+    - name: Ensure dpkg is configured properly
+      command: sudo dpkg --configure -a
+      ignore_errors: yes
+
+    - name: Upgrade all packages to the latest version
+      apt:
+        upgrade: dist
+
+    - name: Reboot the system if needed
+      reboot:
+        reboot_timeout: 600  # Adjust this timeout based on your requirements
+      when: ansible_facts.packages['linux-image-generic'] is defined
+
+    - name: Install common tools
+      apt:
+        name: 
+          - vim
+          - git
+          - curl
+          - wget
+          - htop
+          - net-tools
+          - openssh-server
+          - ufw
+          - fail2ban
+          - unattended-upgrades
+        state: present
+
+    - name: Set up kubernetes user with encrypted password
+      user:
+        name: kubernetes
+        password: "$6$WlnuTmjFt0byzMIH$2/t2fNMAaroIJx9YsujskPFizSKgzmmqKAD3NgzNTxpg.2Vhymy7o2kMnl36mIM8GiMyKSevxkaiPBc4kLU9P1" # Replace this with the actual hashed password
+        state: present
+        groups: sudo
+        append: yes
+        createhome: yes
+
+    - name: Configure SSH
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      with_items:
+        - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin no' }
+        - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication yes' }
+      notify: Restart SSH
+
+    - name: Enable and configure UFW
+      ufw:
+        rule: allow
+        name: OpenSSH
+        state: enabled
+
+    - name: Create swap file
+      shell: |
+        fallocate -l 4G /swapfile
+        chmod 600 /swapfile
+        mkswap /swapfile
+        swapon /swapfile
+      args:
+        creates: /swapfile
+
+    - name: Add swapfile to /etc/fstab
+      mount:
+        name: none
+        src: /swapfile
+        fstype: swap
+        opts: sw
+        state: present
+
+    - name: Configure /etc/fstab
+      blockinfile:
+        path: /etc/fstab
+        block: |
+          # <file system> <mount point>   <type>  <options>       <dump>  <pass>
+          UUID=xxxx-xxxx-xxxx-xxxx / ext4 defaults 0 1
+          UUID=xxxx-xxxx-xxxx-xxxx /home ext4 defaults 0 2
+
+    - name: Set timezone to UTC+2
+      timezone:
+        name: "Etc/GMT-2"
+
+  handlers:
+    - name: Restart systemd-resolved
+      service:
+        name: systemd-resolved
+        state: restarted
+
+    - name: Restart SSH
+      service:
+        name: ssh
+        state: restarted

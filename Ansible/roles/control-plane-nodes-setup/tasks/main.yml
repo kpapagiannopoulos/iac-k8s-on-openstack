@@ -1,0 +1,319 @@
+# ---------- Swap ----------
+- name: Disable swap on master nodes
+  command: swapoff -a
+  ignore_errors: true
+  become: true
+
+- name: Comment out swap in fstab on master nodes
+  replace:
+    path: /etc/fstab
+    regexp: '^[^#].*\s+swap\s+.*$'
+    replace: '# \g<0>'
+    backup: yes
+  become: true
+
+# ---------- Kernel modules / sysctl ----------
+- name: Load kernel modules file
+  copy:
+    content: |
+      overlay
+      br_netfilter
+    dest: /etc/modules-load.d/containerd.conf
+    mode: '0644'
+  become: true
+
+- name: Apply kernel modules
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: [overlay, br_netfilter]
+  become: true
+
+- name: Set Kubernetes sysctl params
+  copy:
+    content: |
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.bridge.bridge-nf-call-iptables = 1
+      net.ipv4.ip_forward = 1
+    dest: /etc/sysctl.d/kubernetes.conf
+    mode: '0644'
+  become: true
+
+- name: Reload sysctl
+  command: sysctl --system
+  become: true
+
+# ---------- Repos & keys (do this BEFORE any apt update) ----------
+- name: Ensure /etc/apt/keyrings exists
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+  become: true
+
+# -- Docker: remove duplicates and re-add with signed-by --
+- name: Remove any existing Docker repo file to avoid duplicates
+  file:
+    path: /etc/apt/sources.list.d/download_docker_com_linux_ubuntu.list
+    state: absent
+  become: true
+
+- name: Fetch Docker GPG key
+  get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /tmp/docker.gpg
+    mode: '0644'
+  become: true
+
+- name: Dearmor Docker key to keyring
+  command: "gpg --dearmor -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg"
+  args:
+    creates: /etc/apt/keyrings/docker.gpg
+  become: true
+
+- name: Use Docker repo with signed-by (no update yet)
+  apt_repository:
+    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable"
+    filename: download_docker_com_linux_ubuntu
+    state: present
+    update_cache: no
+  become: true
+
+# -- Kubernetes: clean old entries, add per-minor repo with keyring --
+- name: Remove any old/incorrect Kubernetes repo files
+  file:
+    path: "{{ item }}"
+    state: absent
+  with_fileglob:
+    - /etc/apt/sources.list.d/*kubernetes*.list
+  become: true
+
+- name: Check if Kubernetes apt key is already present
+  stat:
+    path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  register: kubernetes_apt_key
+  become: true
+
+- name: Download Kubernetes Release.key (per-minor)
+  get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version }}/deb/Release.key"
+    dest: /tmp/k8s-release.key
+    mode: '0644'
+  when: not kubernetes_apt_key.stat.exists
+  become: true
+
+- name: Dearmor Kubernetes key to keyring
+  command: "gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg /tmp/k8s-release.key"
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  when: not kubernetes_apt_key.stat.exists
+  become: true
+
+- name: Set permissions on Kubernetes keyring
+  file:
+    path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    mode: '0644'
+  become: true
+
+- name: Add/Update Kubernetes apt repository (signed-by)
+  copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    mode: '0644'
+    content: |
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version }}/deb/ /
+  become: true
+
+
+- name: apt update after repos are configured
+  apt:
+    update_cache: yes
+    lock_timeout: 600
+  become: true
+
+
+# ---------- Base packages & containerd ----------
+- name: Install required packages for containerd on master nodes
+  apt:
+    name:
+      - curl
+      - gnupg2
+      - software-properties-common
+      - apt-transport-https
+      - ca-certificates
+      - gpg
+    state: present
+    update_cache: yes
+    lock_timeout: 600
+  become: true
+
+- name: Install containerd and cri-tools
+  apt:
+    name:
+      - containerd
+      - runc
+      - cri-tools
+    state: present
+    update_cache: yes
+    lock_timeout: 600
+  become: true
+
+
+
+- name: Wait for containerd socket
+  wait_for:
+    path: /run/containerd/containerd.sock
+    state: present
+    timeout: 30
+  become: true
+
+- name: Check CRI endpoint
+  command: crictl --runtime-endpoint=unix:///var/run/containerd/containerd.sock info
+  register: crictl_info
+  changed_when: false
+  failed_when: crictl_info.rc != 0
+  become: true
+
+# handler
+- name: Restart containerd
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: yes
+  become: true
+
+
+# ---------- Kubernetes tools ----------
+- name: Install Kubernetes components prerequisites
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gpg
+    state: present
+    update_cache: yes
+    lock_timeout: 600
+  become: true
+
+
+
+- name: Update apt cache on master nodes
+  apt:
+    update_cache: yes
+
+- name: Install kubelet, kubeadm, kubectl on master nodes
+  apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+
+- name: Hold kubelet, kubeadm, kubectl packages on master nodes
+  shell: |
+    sudo apt-mark hold kubelet kubeadm kubectl
+
+- name: Enable and start kubelet service on master nodes
+  systemd:
+    name: kubelet
+    enabled: yes
+    state: started
+
+# Tasks specific to initializing the cluster on first master
+- name: Initialize the Kubernetes cluster (first master)
+  command: kubeadm init --pod-network-cidr=10.244.0.0/16
+  register: kubeadm_init_result
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+  run_once: true
+
+- name: Create .kube directory on first master
+  file:
+    path: /home/k8s/.kube
+    state: directory
+    mode: '0700'
+    owner: k8s
+    group: k8s
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+  run_once: true
+
+- name: Copy admin.conf to .kube/config for k8s user
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/k8s/.kube/config
+    mode: '0644'
+    owner: k8s
+    group: k8s
+    remote_src: yes
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+  run_once: true
+
+
+  # Copy kubectl config to all master nodes (except the first master, which already has it)
+- name: Copy admin.conf to .kube/config for other master nodes
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/k8s/.kube/config
+    mode: '0644'
+    owner: k8s
+    group: k8s
+    remote_src: yes
+  when:
+    - inventory_hostname != groups['control_plane_nodes'][0]
+    - groups['control_plane_nodes'] | length > 1
+
+
+# - name: Ensure KUBECONFIG environment variable is set for k8s user
+#   lineinfile:
+#     path: /home/k8s/.bashrc
+#     regexp: '^export KUBECONFIG='
+#     line: 'export KUBECONFIG=/home/k8s/.kube/config'
+#     create: yes
+#   delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+#   run_once: true
+
+- name: Remove global KUBECONFIG environment variable (if exists)
+  lineinfile:
+    path: /etc/environment
+    regexp: '^KUBECONFIG='
+    state: absent
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+  run_once: true
+
+# Tasks to generate the join command for worker nodes
+- name: Generate the kubeadm join command for worker nodes
+  command: kubeadm token create --print-join-command
+  register: join_command
+  run_once: true
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+
+
+
+# Join other master nodes to the control plane
+- name: Join other master nodes to the Kubernetes cluster
+  command: "{{ join_command.stdout }} --control-plane"
+  when: 
+    - inventory_hostname != groups['control_plane_nodes'][0]
+    - groups['control_plane_nodes'] | length > 1
+
+# Copy kubectl config to all master nodes
+- name: Copy admin.conf to .kube/config for other master nodes
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/k8s/.kube/config
+    mode: '0644'
+    owner: k8s
+    group: k8s
+    remote_src: yes
+  when:
+    - inventory_hostname != groups['control_plane_nodes'][0]
+    - groups['control_plane_nodes'] | length > 1
+
+
+
+    # Ensure KUBECONFIG is set on all master nodes
+- name: Ensure KUBECONFIG environment variable is set for k8s user
+  lineinfile:
+    path: /home/k8s/.bashrc
+    regexp: '^export KUBECONFIG='
+    line: 'export KUBECONFIG=/home/k8s/.kube/config'
+    create: yes
