@@ -1,0 +1,12 @@
+---
+# Post-cluster setup tasks (run after masters & workers are joined)
+
+- name: Label all non-control-plane nodes as workers
+  shell: |
+    for node in $(kubectl get nodes --no-headers | awk '!/control-plane/ {print $1}'); do
+      kubectl label node $node node-role.kubernetes.io/worker= --overwrite
+    done
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+  run_once: true
+  environment:
+    KUBECONFIG: /home/k8s/.kube/config

@@ -1,25 +1,39 @@
-# - name: Wait for Kubernetes API server to become available
-#   command: kubectl get nodes
-#   register: api_server_check
-#   retries: 10
-#   delay: 30
-#   until: api_server_check.rc == 0
+# # Install Calico with hardcoded Pod CIDR (10.244.0.0/16)
+# - name: Download Calico manifest
+#   get_url:
+#     url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml"
+#     dest: /tmp/calico.yaml
+#     mode: '0644'
 #   delegate_to: "{{ groups['control_plane_nodes'][0] }}"
 #   run_once: true
 
-- name: Wait 80s before installing Calico
-  ansible.builtin.pause:
-    seconds: 80
+# - name: Update CALICO_IPV4POOL_CIDR in Calico manifest
+#   replace:
+#     path: /tmp/calico.yaml
+#     regexp: 'CALICO_IPV4POOL_CIDR="?[^" ]*"?'
+#     replace: 'CALICO_IPV4POOL_CIDR="10.244.0.0/16"'
+#   delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+#   run_once: true
+
+# - name: Apply Calico manifest
+#   command: >
+#     kubectl apply -f /tmp/calico.yaml
+#     --kubeconfig=/home/k8s/.kube/config
+#   register: calico_apply
+#   retries: 15
+#   delay: 10
+#   until: calico_apply.rc == 0
+#   delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+#   run_once: true
+
+
+- name: Install Flannel CNI (matches 10.244.0.0/16)
+  environment:
+    KUBECONFIG: /home/k8s/.kube/config
+  command: kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/v0.25.5/Documentation/kube-flannel.yml
   delegate_to: "{{ groups['control_plane_nodes'][0] }}"
   run_once: true
-
-- name: Install Tigera Calico
-  command: >
-    kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml
-    --kubeconfig=/home/k8s/.kube/config
-  register: calico_apply
   retries: 5
   delay: 10
-  until: calico_apply.rc == 0
-  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
-  run_once: true
+  register: flannel_apply
+  until: flannel_apply.rc == 0

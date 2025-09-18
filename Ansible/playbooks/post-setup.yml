@@ -1,0 +1,7 @@
+- name: Kubernetes Cluster Post-Setup
+  hosts: control_plane_nodes
+  become: true
+  vars_files:
+    - ../inventories/uat-env/vars/vars.yml
+  roles:
+    - role: ./roles/post-cluster-setup

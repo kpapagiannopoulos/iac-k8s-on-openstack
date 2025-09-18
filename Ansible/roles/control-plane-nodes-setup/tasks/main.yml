@@ -157,6 +157,42 @@
     lock_timeout: 600
   become: true
 
+# 1) Ο φάκελος να υπάρχει
+- name: Ensure /etc/containerd directory exists
+  file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
+  become: true
+
+# 2) Αν δεν υπάρχει config.toml, φτιάξ' τον από τα defaults
+- name: Check if /etc/containerd/config.toml exists
+  stat:
+    path: /etc/containerd/config.toml
+  register: containerd_cfg
+  become: true
+
+- name: Generate default containerd config (if missing)
+  shell: |
+    containerd config default | tee /etc/containerd/config.toml >/dev/null
+  when: not containerd_cfg.stat.exists
+  args:
+    executable: /bin/bash
+  become: true
+
+- name: Enable SystemdCgroup in containerd
+  replace:
+    path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
+  become: true
+
+- name: Restart containerd (apply SystemdCgroup)
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: yes
+  become: true
 
 
 - name: Wait for containerd socket
@@ -213,6 +249,23 @@
   shell: |
     sudo apt-mark hold kubelet kubeadm kubectl
 
+
+
+- name: Configure kubelet cgroup driver
+  copy:
+    dest: /etc/default/kubelet
+    content: |
+      KUBELET_EXTRA_ARGS="--cgroup-driver=systemd --container-runtime-endpoint=unix:///run/containerd/containerd.sock"
+  become: true
+
+- name: Restart kubelet
+  systemd:
+    name: kubelet
+    state: restarted
+    enabled: true
+  become: true
+
+
 - name: Enable and start kubelet service on master nodes
   systemd:
     name: kubelet
@@ -225,6 +278,58 @@
   register: kubeadm_init_result
   delegate_to: "{{ groups['control_plane_nodes'][0] }}"
   run_once: true
+
+
+- name: Create .kube directory on first master
+  file:
+    path: /home/k8s/.kube
+    state: directory
+    mode: '0700'
+    owner: k8s
+    group: k8s
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+  run_once: true
+
+- name: Copy admin.conf to .kube/config for k8s user
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/k8s/.kube/config
+    mode: '0600'
+    owner: k8s
+    group: k8s
+    remote_src: yes
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+  run_once: true
+
+
+
+- name: Wait for API server to be ready
+  uri:
+    url: https://127.0.0.1:6443/healthz
+    method: GET
+    validate_certs: no
+    status_code: 200
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+  run_once: true
+  retries: 30
+  delay: 5
+  register: apiserver_health
+  until: apiserver_health.status == 200
+
+
+- name: Install Flannel CNI (matches 10.244.0.0/16)
+  environment:
+    KUBECONFIG: /home/k8s/.kube/config
+  command: kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/{{ flannel_version }}/Documentation/kube-flannel.yml
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+  run_once: true
+  retries: 5
+  delay: 10
+  register: flannel_apply
+  until: flannel_apply.rc == 0
+
+
+
 
 - name: Create .kube directory on first master
   file:
@@ -286,34 +391,37 @@
   run_once: true
   delegate_to: "{{ groups['control_plane_nodes'][0] }}"
 
+- name: Upload certs for additional masters
+  command: kubeadm init phase upload-certs --upload-certs
+  register: kubeadm_certs
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+  run_once: true
+  when: groups['control_plane_nodes'] | length > 1
 
 
-# Join other master nodes to the control plane
+- name: Build control-plane join command
+  set_fact:
+    join_command_cp: "{{ join_command.stdout }} --control-plane --certificate-key {{ kubeadm_certs.stdout_lines[-1] }}"
+  when: groups['control_plane_nodes'] | length > 1
+
+
 - name: Join other master nodes to the Kubernetes cluster
-  command: "{{ join_command.stdout }} --control-plane"
+  command: "{{ hostvars[groups['control_plane_nodes'][0]].join_command_cp }}"
   when: 
     - inventory_hostname != groups['control_plane_nodes'][0]
     - groups['control_plane_nodes'] | length > 1
 
-# Copy kubectl config to all master nodes
-- name: Copy admin.conf to .kube/config for other master nodes
-  copy:
-    src: /etc/kubernetes/admin.conf
-    dest: /home/k8s/.kube/config
-    mode: '0644'
-    owner: k8s
-    group: k8s
-    remote_src: yes
-  when:
-    - inventory_hostname != groups['control_plane_nodes'][0]
-    - groups['control_plane_nodes'] | length > 1
+
+
+# # Join other master nodes to the control plane
+# - name: Join other master nodes to the Kubernetes cluster
+#   command: "{{ join_command.stdout }} --control-plane"
+#   when: 
+#     - inventory_hostname != groups['control_plane_nodes'][0]
+#     - groups['control_plane_nodes'] | length > 1
 
 
 
-    # Ensure KUBECONFIG is set on all master nodes
-- name: Ensure KUBECONFIG environment variable is set for k8s user
-  lineinfile:
-    path: /home/k8s/.bashrc
-    regexp: '^export KUBECONFIG='
-    line: 'export KUBECONFIG=/home/k8s/.kube/config'
-    create: yes
+
+
+

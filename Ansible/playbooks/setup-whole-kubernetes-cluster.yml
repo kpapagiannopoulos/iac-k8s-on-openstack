@@ -15,10 +15,10 @@
   roles:
     - role: ./roles/worker-nodes-setup
 
-- name: Apply Calico
+- name: Kubernetes Cluster Post-Setup
   hosts: control_plane_nodes
-  become: yes
+  become: true
   vars_files:
     - ../inventories/uat-env/vars/vars.yml
   roles:
-    - ./roles/k8s-cni-setup  # Role for applying the Calico CNI plugin
+    - role: ./roles/post-cluster-setup

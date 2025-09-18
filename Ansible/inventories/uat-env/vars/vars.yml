@@ -1,3 +1,4 @@
-kubernetes_version: "v1.31"
+kubernetes_version: "v1.32"
 kubernetes_upgrade_version: "v1.32.0"
-calico_version: "v3.29.1"
+calico_version: "v3.30.3"
+flannel_version: "v0.25.5"

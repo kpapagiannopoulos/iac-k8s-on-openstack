@@ -12,3 +12,22 @@ ansible-playbook -i ./inventories/uat-env/hosts.ini ./playbooks/upgrade-k8s-clus
 
 
 ssh -i C:\Users\kpapa\IaC\Terraform\uat-env\.ssh\k8s-shared-key.pem k8s@147.102.75.172
+
+
+kubectl create ns demo && \
+kubectl create deployment hello --image=nginx:1.27 --port=80 -n demo && \
+kubectl expose deployment hello --type=ClusterIP --port=80 --target-port=80 -n demo && \
+
+
+#check it
+
+kubectl run tmp-shell --rm -i --tty --image=busybox -- /bin/sh
+
+wget -qO- http://<CLUSTER-IP>
+
+
+sudo systemctl restart kubelet
+
+
+#if .ssh is full 
+truncate -s 0 /root/.ssh/known_hosts

@@ -1,11 +1,11 @@
 
  # ---------- Swap ----------
-- name: Disable swap on master nodes
+- name: Disable swap on worker nodes
   command: swapoff -a
   ignore_errors: true
   become: true
 
-- name: Comment out swap in fstab on master nodes
+- name: Comment out swap in fstab on worker nodes
   replace:
     path: /etc/fstab
     regexp: '^[^#].*\s+swap\s+.*$'
@@ -159,6 +159,44 @@
   become: true
 
 
+# 1) Ο φάκελος να υπάρχει
+- name: Ensure /etc/containerd directory exists
+  file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
+  become: true
+
+# 2) Αν δεν υπάρχει config.toml, φτιάξ' τον από τα defaults
+- name: Check if /etc/containerd/config.toml exists
+  stat:
+    path: /etc/containerd/config.toml
+  register: containerd_cfg
+  become: true
+
+- name: Generate default containerd config (if missing)
+  shell: |
+    containerd config default | tee /etc/containerd/config.toml >/dev/null
+  when: not containerd_cfg.stat.exists
+  args:
+    executable: /bin/bash
+  become: true
+
+- name: Enable SystemdCgroup in containerd
+  replace:
+    path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
+  become: true
+
+- name: Restart containerd (apply SystemdCgroup)
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: yes
+  become: true
+
+
 
 - name: Wait for containerd socket
   wait_for:
@@ -195,13 +233,42 @@
   shell: |
     sudo apt-mark hold kubelet kubeadm kubectl
 
+- name: Configure kubelet for containerd
+  copy:
+    dest: /etc/default/kubelet
+    content: |
+      KUBELET_EXTRA_ARGS="--cgroup-driver=systemd --container-runtime-endpoint=unix:///run/containerd/containerd.sock"
+  become: true
+
+- name: Restart kubelet to apply config
+  systemd:
+    name: kubelet
+    state: restarted
+    enabled: true
+  become: true
+
+
+
 - name: Enable and start kubelet service on worker nodes
   systemd:
     name: kubelet
     enabled: yes
     state: started
 
-# Task to join the worker node to the cluster
+# # Task to join the worker node to the cluster
+# - name: Join worker node to the cluster
+#   shell: "{{ hostvars[groups['control_plane_nodes'][0]].join_command.stdout }}"
+#   when: hostvars[groups['control_plane_nodes'][0]].join_command is defined and hostvars[groups['control_plane_nodes'][0]].join_command.stdout is defined
+
 - name: Join worker node to the cluster
-  shell: "{{ hostvars[groups['control_plane_nodes'][0]].join_command.stdout }}"
+  shell: "{{ hostvars[groups['control_plane_nodes'][0]].join_command.stdout }} --cri-socket unix:///run/containerd/containerd.sock"
   when: hostvars[groups['control_plane_nodes'][0]].join_command is defined and hostvars[groups['control_plane_nodes'][0]].join_command.stdout is defined
+  become: true
+
+
+- name: Label node as worker
+  command: kubectl label node {{ inventory_hostname }} node-role.kubernetes.io/worker= --overwrite
+  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+  run_once: false
+  when: "'worker_nodes' in group_names"
+  become: true

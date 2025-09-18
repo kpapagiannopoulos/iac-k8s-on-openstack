@@ -1,12 +1,12 @@
 # instance_name               = "vm-tf"
 worker_instance_name        = "k8s-worker"
 master_instance_name        = "k8s-master"
-# image_id                    = "6f7b298b-d713-4d13-831e-783083a458fc" #ubuntu 22.04
-image_id                    = "a2a33db3-0d56-4e2e-bcae-033cd7840724"  #ubuntu 24.04
-flavor_id                   = "m1.medium"
+image_id                    = "c1310b08-4b82-414f-b1a5-5ad5797f92b2" #ubuntu 22.04
+# image_id                    = "a2a33db3-0d56-4e2e-bcae-033cd7840724"  #ubuntu 24.04
+flavor_id                   = "m1.large"
 internal_network_name       = "kpapagias"
 external_network_name       = "external-1759"
-volume_size                 = 20
+volume_size                 = 40
 key_directory               = "./.ssh"
 master_count                = 1
 worker_count                = 1
