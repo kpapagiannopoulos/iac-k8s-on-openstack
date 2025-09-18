@@ -266,9 +266,9 @@
   become: true
 
 
-- name: Label node as worker
-  command: kubectl label node {{ inventory_hostname }} node-role.kubernetes.io/worker= --overwrite
-  delegate_to: "{{ groups['control_plane_nodes'][0] }}"
-  run_once: false
-  when: "'worker_nodes' in group_names"
-  become: true
+# - name: Label node as worker
+#   command: kubectl label node {{ inventory_hostname }} node-role.kubernetes.io/worker= --overwrite
+#   delegate_to: "{{ groups['control_plane_nodes'][0] }}"
+#   run_once: false
+#   when: "'worker_nodes' in group_names"
+#   become: true

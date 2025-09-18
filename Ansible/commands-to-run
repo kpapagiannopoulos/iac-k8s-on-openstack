@@ -31,3 +31,7 @@ sudo systemctl restart kubelet
 
 #if .ssh is full 
 truncate -s 0 /root/.ssh/known_hosts
+
+
+
+kubectl get pods -o wide -A

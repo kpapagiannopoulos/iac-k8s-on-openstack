@@ -1,6 +1,7 @@
 ---
 # Post-cluster setup tasks (run after masters & workers are joined)
 
+# Label όλα τα worker nodes (δηλαδή όσα δεν έχουν control-plane)
 - name: Label all non-control-plane nodes as workers
   shell: |
     for node in $(kubectl get nodes --no-headers | awk '!/control-plane/ {print $1}'); do
